@@ -1,0 +1,42 @@
+name: deploy-mlflow-fastapi
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-mlflow-fastapi
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build all images
+        run: |
+          docker compose -f docker-compose.yml build
+
+      - name: Start MLflow (wait until healthy)
+        run: |
+          docker compose -f docker-compose.yml up -d --wait --wait-timeout 120 mlflow
+
+      - name: Train & register model (run once)
+        run: |
+          docker compose -f docker-compose.yml run --rm trainer
+
+      - name: Deploy FastAPI (up + wait + restart to load latest model)
+        run: |
+          docker compose -f docker-compose.yml up -d --wait --wait-timeout 60 serve
+          docker compose -f docker-compose.yml restart serve
+
+      - name: Show endpoints
+        run: |
+          Write-Host "MLflow UI     : http://127.0.0.1:5000"
+          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
