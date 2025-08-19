@@ -38,7 +38,7 @@ Pré-requis : **Docker Desktop** (Compose v2 activé). À la racine du projet :
 # 1) Démarrer MLflow
 docker compose up -d --build mlflow
 
-# 2) Lancer tests + entraînement (enregistre le modèle dans MLflow)
+# 2) Lancer tests + entraînement (enregistre le modèle dans MLflow) ##
 docker compose run --rm trainer
 
 # 3) Démarrer le serveur FastAPI (charge la dernière version du modèle)
