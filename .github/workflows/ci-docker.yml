@@ -58,5 +58,5 @@ jobs:
       - name: Show endpoints
         run: |
           Write-Host "MLflow UI     : http://127.0.0.1:5000"
-          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs" ###
 
