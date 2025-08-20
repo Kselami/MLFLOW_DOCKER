@@ -21,7 +21,6 @@ from sklearn.metrics import (
     classification_report,
 )
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
 
 
 def train_and_log(
@@ -32,7 +31,7 @@ def train_and_log(
     seed: int,
     min_accuracy: float,
 ) -> float:
-    # Pointage MLflow + expérience
+    # Pointeur MLflow + expérience
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
     mlflow.set_experiment(experiment_name)
 
@@ -47,8 +46,7 @@ def train_and_log(
 
     with mlflow.start_run() as run:
         # Params
-        params = {"n_estimators": n_estimators, "max_depth": max_depth, "seed": seed}
-        mlflow.log_params(params)
+        mlflow.log_params({"n_estimators": n_estimators, "max_depth": max_depth, "seed": seed})
 
         # Modèle
         clf = RandomForestClassifier(
@@ -58,14 +56,14 @@ def train_and_log(
 
         # Prédictions
         y_pred = clf.predict(X_te)
-        # Probabilité de la classe positive (1 = benign dans ce dataset)
+        y_proba = None
         if hasattr(clf, "predict_proba"):
-            y_proba = clf.predict_proba(X_te)[:, 1]
-        else:
-            # Fallback si le modèle n'a pas predict_proba
-            y_proba = None
+            try:
+                y_proba = clf.predict_proba(X_te)[:, 1]
+            except Exception:
+                y_proba = None
 
-        # Métriques étendues
+        # Métriques
         metrics = {
             "accuracy": float(accuracy_score(y_te, y_pred)),
             "precision": float(precision_score(y_te, y_pred, zero_division=0)),
@@ -88,58 +86,41 @@ def train_and_log(
 
         mlflow.log_metrics(metrics)
 
-        # Artifacts: confusion matrix + classification report + feature importances
+        # Artefacts texte (pas besoin de libs en plus)
         try:
             cm = confusion_matrix(y_te, y_pred, labels=[0, 1])
-            fig, ax = plt.subplots(figsize=(4, 4), dpi=120)
-            im = ax.imshow(cm, cmap="Blues")
-            ax.set_title("Confusion Matrix")
-            ax.set_xlabel("Predicted")
-            ax.set_ylabel("True")
-            ax.set_xticks([0, 1], ["malignant(0)", "benign(1)"])
-            ax.set_yticks([0, 1], ["malignant(0)", "benign(1)"])
-            for (i, j), v in pd.DataFrame(cm).stack().items():
-                ax.text(j, i, str(v), ha="center", va="center")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            fig.tight_layout()
-
+            cm_df = pd.DataFrame(cm, index=["true_malignant(0)", "true_benign(1)"],
+                                 columns=["pred_malignant(0)", "pred_benign(1)"])
             with tempfile.TemporaryDirectory() as td:
-                cm_path = os.path.join(td, "confusion_matrix.png")
-                fig.savefig(cm_path, bbox_inches="tight")
-                mlflow.log_artifact(cm_path, artifact_path="figures")
-            plt.close(fig)
-        except Exception:
-            pass
-
-        try:
-            report = classification_report(y_te, y_pred, digits=4)
-            with tempfile.TemporaryDirectory() as td:
+                # Classification report
                 rep_path = os.path.join(td, "classification_report.txt")
                 with open(rep_path, "w", encoding="utf-8") as f:
-                    f.write(report)
+                    f.write(classification_report(y_te, y_pred, digits=4))
                 mlflow.log_artifact(rep_path, artifact_path="reports")
-        except Exception:
-            pass
 
-        try:
-            if hasattr(clf, "feature_importances_"):
-                fi = (
-                    pd.Series(clf.feature_importances_, index=X.columns)
-                    .sort_values(ascending=False)
-                    .to_frame("importance")
-                )
-                with tempfile.TemporaryDirectory() as td:
+                # Confusion matrix CSV
+                cm_path = os.path.join(td, "confusion_matrix.csv")
+                cm_df.to_csv(cm_path, index=True)
+                mlflow.log_artifact(cm_path, artifact_path="reports")
+
+                # Feature importances
+                if hasattr(clf, "feature_importances_"):
+                    fi = (
+                        pd.Series(clf.feature_importances_, index=X.columns)
+                        .sort_values(ascending=False)
+                        .to_frame("importance")
+                    )
                     fi_path = os.path.join(td, "feature_importances.csv")
                     fi.to_csv(fi_path, index=True)
                     mlflow.log_artifact(fi_path, artifact_path="reports")
         except Exception:
             pass
 
-        # Signature + input_example pour afficher Schema / Input / Output dans l'UI
+        # Signature + input_example => MLflow montre Schema / Input / Output
         signature = infer_signature(X_te, y_pred)
         input_example = X_te.head(2)
 
-        # Log + enregistrement au Model Registry
+        # Enregistrement du modèle (Model Registry)
         mlflow.sklearn.log_model(
             sk_model=clf,
             artifact_path="model",
@@ -151,9 +132,7 @@ def train_and_log(
         acc = metrics["accuracy"]
         print(f"Run: {run.info.run_id}  accuracy={acc:.4f}")
         if acc < min_accuracy:
-            print(
-                f"[WARN] accuracy {acc:.4f} < min_accuracy {min_accuracy:.4f} (le run reste FINISHED)."
-            )
+            print(f"[WARN] accuracy {acc:.4f} < min_accuracy {min_accuracy:.4f} (le run reste FINISHED).")
         return acc
 
 
@@ -182,3 +161,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
