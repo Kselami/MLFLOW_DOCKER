@@ -9,11 +9,11 @@ services:
     volumes:
       - ./data/mlflow:/mlflow
     healthcheck:
-      # vérifier l’API MLflow (évite le 503 "trop tôt")
-      test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/2.0/mlflow/experiments/list"]
+      # check simple sur la home (HTTP 200). Le trainer, lui, attendra l'API /api/2.0.
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
       interval: 5s
       timeout: 3s
-      retries: 60
+      retries: 120
       start_period: 20s
 
   trainer:
@@ -44,3 +44,4 @@ services:
       timeout: 3s
       retries: 25
       start_period: 10s
+
