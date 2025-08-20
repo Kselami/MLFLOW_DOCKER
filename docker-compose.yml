@@ -1,20 +1,20 @@
+version: "3.9"
+
 services:
   mlflow:
     build: ./mlflow
     image: local/mlflow:latest
     container_name: mlflow
-    user: "0:0"  # exécuter en root pour éviter les soucis de permissions sur ./data/mlflow
     ports:
       - "5000:5000"
     volumes:
       - ./data/mlflow:/mlflow
     healthcheck:
-      # check simple sur la home (HTTP 200). Le trainer, lui, attendra l'API /api/2.0.
       test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
       interval: 5s
       timeout: 3s
-      retries: 120
-      start_period: 20s
+      retries: 25
+      start_period: 10s
 
   trainer:
     build: ./trainer
@@ -44,4 +44,3 @@ services:
       timeout: 3s
       retries: 25
       start_period: 10s
-
