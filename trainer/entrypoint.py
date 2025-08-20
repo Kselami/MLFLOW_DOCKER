@@ -1,13 +1,4 @@
-import sys
-import pytest
-from src.train import main as train_main
-
-if __name__ == "__main__":
-    code = pytest.main(["-q"])
-    if code != 0:
-        sys.exit(code)
-    # Entraînement avec paramètres par défaut (min-accuracy=0.0)
-    train_main([])import os
+import os
 import sys
 import time
 import urllib.request
@@ -35,7 +26,7 @@ def wait_for_mlflow_api(uri: str, seconds: int = 180) -> None:
 
 
 if __name__ == "__main__":
-    # 1) Attendre l'API MLflow (même si le healthcheck vient de passer)
+    # 1) Attendre l'API MLflow
     uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
     wait_for_mlflow_api(uri, 180)
 
@@ -46,4 +37,3 @@ if __name__ == "__main__":
 
     # 3) Entraînement
     train_main([])
-
