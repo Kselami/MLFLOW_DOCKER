@@ -19,19 +19,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build all images
+      # 1) Build uniquement trainer & serve (on ne touche pas à mlflow)
+      - name: Build trainer & serve images
         run: |
-          docker compose -f docker-compose.yml build
+          docker compose -f docker-compose.yml build trainer serve
 
-      - name: Start MLflow (wait until healthy)
+      # 2) S'assurer que MLflow tourne (sans le recréer si déjà OK) + attendre l'API
+      - name: Ensure MLflow is up (no recreate) + wait for API
         run: |
-          docker compose -f docker-compose.yml up -d --wait --wait-timeout 120 mlflow
+          # Démarre MLflow si pas déjà lancé
+          docker compose -f docker-compose.yml up -d mlflow
 
-      - name: Train & register model (run once)
+          # Attendre explicitement l'API /api/2.0 (en plus du healthcheck)
+          $deadline = (Get-Date).AddMinutes(5)
+          do {
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list" -TimeoutSec 3 | Out-Null
+              Write-Host "MLflow API OK"
+              $ok = $true
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          } until ($ok -or (Get-Date) -ge $deadline)
+
+          if (-not $ok) { throw "MLflow API not ready after 5 minutes" }
+
+      # 3) Entraîner & enregistrer une nouvelle version du modèle
+      - name: Train & register model (new ModelVersion)
         run: |
           docker compose -f docker-compose.yml run --rm trainer
 
-      - name: Deploy FastAPI (up + wait + restart to load latest model)
+      # 4) Déployer / rafraîchir FastAPI
+      - name: Deploy FastAPI (up + wait + restart)
         run: |
           docker compose -f docker-compose.yml up -d --wait --wait-timeout 60 serve
           docker compose -f docker-compose.yml restart serve
@@ -40,3 +59,4 @@ jobs:
         run: |
           Write-Host "MLflow UI     : http://127.0.0.1:5000"
           Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+
