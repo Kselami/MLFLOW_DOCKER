@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-mlflow-fastapi
+  group: deploy-mlflow-fastapi-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -19,26 +19,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build all images
+      - name: Build images
         run: |
           docker compose -f docker-compose.yml build
 
-      - name: Start MLflow (wait until healthy)
+      - name: Recreate MLflow and wait for API   # ✅ correctif minimal anti-503
         run: |
-          docker compose -f docker-compose.yml up -d --wait --wait-timeout 120 mlflow
+          docker compose -f docker-compose.yml rm -sf mlflow
+          docker compose -f docker-compose.yml up -d mlflow
 
-      - name: Train & register model (run once)
-        run: |
-          docker compose -f docker-compose.yml run --rm trainer
+          # Attendre l’API /api/2.0 jusqu’à 10 minutes
+          $deadline = (Get-Date).AddMinutes(10)
+          $ok = $false
+          $api = "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list"
 
-      - name: Deploy FastAPI (up + wait + restart to load latest model)
-        run: |
-          docker compose -f docker-compose.yml up -d --wait --wait-timeout 60 serve
-          docker compose -f docker-compose.yml restart serve
+          do {
+            $state = ""
+            try { $state = (docker inspect -f '{{.State.Status}}' mlflow).Trim() } catch {}
+            if ($state -eq "exited" -or $state -eq "dead") {
+              Write-Host "=== mlflow logs (tail) ==="
+              docker logs mlflow --tail 200
+              throw "mlflow container exited (state=$state)"
+            }
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri $api -TimeoutSec 5 | Out-Null
+              $ok = $true
+            } catch {
+              Start-Sleep -Seconds 3
+            }
 
-      - name: Show endpoints
-        run: |
-          Write-Host "MLflow UI     : http://127.0.0.1:5000"
-          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
 
 
