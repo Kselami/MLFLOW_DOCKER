@@ -11,51 +11,67 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # Build uniquement ce qui change côté app
-      - name: Build trainer & serve only
-        run: docker compose -f docker-compose.yml build trainer serve
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # Démarre la DB, puis redémarre proprement MLflow (si image changée)
-      - name: Up Postgres
-        run: docker compose -f docker-compose.yml up -d postgres
+      # Build des 3 images (chargées localement, pas de push registre)
+      - name: Build MLflow image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mlflow
+          tags: local/mlflow:latest
+          load: true
+          push: false
 
-      - name: Recreate MLflow (clean restart)
-        run: docker compose -f docker-compose.yml up -d --force-recreate --no-deps mlflow
+      - name: Build trainer image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./trainer
+          tags: local/trainer:latest
+          load: true
+          push: false
 
-      # Attente en 2 temps (HTML puis API), sans scripts locaux
+      - name: Build serve image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./serve
+          tags: local/serve:latest
+          load: true
+          push: false
+
+      # Démarrer Postgres + MLflow
+      - name: Up DB + MLflow
+        run: docker compose -f docker-compose.yml up -d postgres mlflow
+
+      # Attente robuste MLflow (UI puis API), via action dédiée (pas de script shell)
       - name: Wait for MLflow Web UI
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:5000/
-          max-attempts: 45
-          retry-delay: 8s
+          max-attempts: 60
+          retry-delay: 5s
           follow-redirect: false
           retry-all: true
 
-      - name: Short grace period
-        uses: juliangruber/sleep-action@v1
+      - name: Wait for MLflow API
+        uses: jtalk/url-health-check-action@v4
         with:
-          time: 20s
+          url: http://127.0.0.1:5000/api/2.0/mlflow/experiments/list
+          max-attempts: 120
+          retry-delay: 5s
+          follow-redirect: false
+          retry-all: true
 
-      - name: Wait for MLflow API (in-container)
-        run: >
-          docker exec mlflow sh -lc
-          'for i in $(seq 1 120); do
-             curl -fsS http://localhost:5000/api/2.0/mlflow/experiments/list >/dev/null && exit 0;
-             sleep 2;
-           done;
-           echo "API not ready"; exit 1'
-
-      # Entraîner et créer une nouvelle Model Version
+      # Entraîner & créer une nouvelle version du modèle
       - name: Train & register model
         run: docker compose -f docker-compose.yml run --rm trainer
 
-      # Déployer l'API FastAPI et s'assurer qu'elle est prête
+      # Déployer / rafraîchir l'API FastAPI
       - name: Up serve
         run: docker compose -f docker-compose.yml up -d serve
 
@@ -68,6 +84,7 @@ jobs:
           follow-redirect: false
           retry-all: true
 
+      # (Optionnel) Redémarrer pour s'assurer que la dernière version du modèle est chargée
       - name: Restart serve to load latest model
         run: docker compose -f docker-compose.yml restart serve
 
@@ -80,10 +97,18 @@ jobs:
           follow-redirect: false
           retry-all: true
 
-      - name: Show endpoints
-        run: |
-          echo "MLflow UI     : http://127.0.0.1:5000"
-          echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+      # Logs en artefacts (utile en cas d'échec, sans shell custom)
+      - name: Export docker compose logs
+        if: always()
+        run: docker compose -f docker-compose.yml logs --no-color > compose.log || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: compose.log
+
 
 
 
