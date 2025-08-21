@@ -8,3 +8,4 @@ if __name__ == "__main__":
         sys.exit(code)
     # Entraînement avec paramètres par défaut (min-accuracy=0.0)
     train_main([])
+

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-mlflow-fastapi-${{ github.ref }}
+  group: deploy-mlflow-fastapi
   cancel-in-progress: true
 
 jobs:
@@ -19,42 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build images
+      - name: Build all images
         run: |
           docker compose -f docker-compose.yml build
 
-      - name: Start MLflow (recreate) + wait for API
+      - name: Start MLflow (wait until healthy)
         run: |
-          # Recrée le service pour prendre la dernière config/commande
-          docker compose -f docker-compose.yml rm -sf mlflow
-          docker compose -f docker-compose.yml up -d mlflow
-
-          # Attente explicite de l’API /api/2.0 (jusqu’à 10 min), avec check d’état conteneur
-          $deadline = (Get-Date).AddMinutes(10)
-          $ok = $false
-          $api = "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list"
-
-          do {
-            $state = ""
-            try { $state = (docker inspect -f '{{.State.Status}}' mlflow).Trim() } catch {}
-            if ($state -eq "exited" -or $state -eq "dead") {
-              Write-Host "=== mlflow logs (tail) ==="
-              docker logs mlflow --tail 200
-              throw "mlflow container exited (state=$state)"
-            }
-            try {
-              Invoke-WebRequest -UseBasicParsing -Uri $api -TimeoutSec 5 | Out-Null
-              $ok = $true
-            } catch {
-              Start-Sleep -Seconds 3
-            }
-          } until ($ok -or (Get-Date) -ge $deadline)
-
-          if (-not $ok) {
-            Write-Host "=== mlflow logs (tail) ==="
-            docker logs mlflow --tail 200
-            throw "MLflow API not ready after 10 minutes"
-          }
+          docker compose -f docker-compose.yml up -d --wait --wait-timeout 120 mlflow
 
       - name: Train & register model (run once)
         run: |
@@ -62,11 +33,12 @@ jobs:
 
       - name: Deploy FastAPI (up + wait + restart to load latest model)
         run: |
-          docker compose -f docker-compose.yml up -d --build --wait --wait-timeout 90 serve
+          docker compose -f docker-compose.yml up -d --wait --wait-timeout 60 serve
           docker compose -f docker-compose.yml restart serve
 
       - name: Show endpoints
         run: |
           Write-Host "MLflow UI     : http://127.0.0.1:5000"
           Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
