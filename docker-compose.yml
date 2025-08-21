@@ -1,18 +1,48 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: mlflow-postgres
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
   mlflow:
     build: ./mlflow
     image: local/mlflow:latest
     container_name: mlflow
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "5000:5000"
+    # Artifacts en local (volume nommé) — pas de souci Windows
     volumes:
-      - ./data/mlflow:/mlflow
+      - mlflow_artifacts:/mlflow/artifacts
+    environment:
+      # Sécurité: même si Gunicorn change par défaut, on borne à 2 workers
+      - GUNICORN_CMD_ARGS=--workers 2 --timeout 300 --graceful-timeout 60 --threads 1 --keep-alive 5
+    command: >
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow
+      --serve-artifacts
+      --artifacts-destination /mlflow/artifacts
+      --host 0.0.0.0 --port 5000
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/2.0/mlflow/experiments/list"]
       interval: 5s
-      timeout: 3s
-      retries: 25
-      start_period: 10s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
 
   trainer:
     build: ./trainer
@@ -42,5 +72,10 @@ services:
       timeout: 3s
       retries: 25
       start_period: 10s
+
+volumes:
+  pgdata: {}
+  mlflow_artifacts: {}
+
 
 

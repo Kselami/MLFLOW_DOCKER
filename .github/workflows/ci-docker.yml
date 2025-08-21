@@ -12,66 +12,49 @@ concurrency:
 jobs:
   deploy:
     runs-on: self-hosted
-    defaults:
-      run:
-        shell: powershell
-
     steps:
       - uses: actions/checkout@v4
 
+      # Build (toutes les images)
       - name: Build images
-        run: |
-          docker compose -f docker-compose.yml build
+        run: docker compose -f docker-compose.yml build
 
-      - name: Recreate MLflow and wait for API   # ✅ anti-503, sans do/until
-        run: |
-          docker compose -f docker-compose.yml rm -sf mlflow
-          docker compose -f docker-compose.yml up -d mlflow
+      # Démarre Postgres + MLflow (sans scripts maison)
+      - name: Up DB + MLflow
+        run: docker compose -f docker-compose.yml up -d postgres mlflow
 
-          $api = "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list"
-          $ok = $false
+      # Attendre l'API MLflow /api/2.0/... avec une action dédiée
+      - name: Wait for MLflow API
+        uses: jtalk/url-health-check-action@v4
+        with:
+          url: http://127.0.0.1:5000/api/2.0/mlflow/experiments/list
+          max-attempts: 120     # 120 * 5s = 10 min
+          retry-delay: 5s
+          follow-redirect: false
+          valid-status-codes: 200
 
-          # 300 * 2s = 10 minutes max
-          for ($i = 0; $i -lt 300; $i++) {
-            $state = ""
-            try {
-              $state = (docker inspect -f '{{.State.Status}}' mlflow).Trim()
-            } catch {}
+      # Entraîner et enregistrer une nouvelle version (v2, v3, …)
+      - name: Train & register model
+        run: docker compose -f docker-compose.yml run --rm trainer
 
-            if ($state -eq "exited" -or $state -eq "dead") {
-              Write-Host "=== mlflow logs (tail) ==="
-              docker logs mlflow --tail 200
-              throw "mlflow container exited (state=$state)"
-            }
+      # Déployer l'API (démarrage rapide, lazy-load du modèle côté app si tu as pris mon main.py)
+      - name: Up serve
+        run: docker compose -f docker-compose.yml up -d serve
 
-            try {
-              Invoke-WebRequest -UseBasicParsing -Uri $api -TimeoutSec 5 | Out-Null
-              $ok = $true
-              break
-            } catch {
-              Start-Sleep -Seconds 2
-            }
-          }
-
-          if (-not $ok) {
-            Write-Host "=== mlflow logs (tail) ==="
-            docker logs mlflow --tail 200
-            throw "MLflow API not ready after 10 minutes"
-          }
-
-      - name: Train & register model (new ModelVersion)
-        run: |
-          docker compose -f docker-compose.yml run --rm trainer
-
-      - name: Deploy FastAPI (up + wait + restart)
-        run: |
-          docker compose -f docker-compose.yml up -d --build --wait --wait-timeout 90 serve
-          docker compose -f docker-compose.yml restart serve
+      # Health-check FastAPI (pas de script custom)
+      - name: Wait for FastAPI
+        uses: jtalk/url-health-check-action@v4
+        with:
+          url: http://127.0.0.1:8000/health
+          max-attempts: 60
+          retry-delay: 3s
+          valid-status-codes: 200
 
       - name: Show endpoints
         run: |
-          Write-Host "MLflow UI     : http://127.0.0.1:5000"
-          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+          echo "MLflow UI     : http://127.0.0.1:5000"
+          echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 
