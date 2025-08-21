@@ -23,30 +23,56 @@ jobs:
         run: |
           docker compose -f docker-compose.yml build
 
-      - name: Recreate MLflow and wait for API   # ✅ correctif minimal anti-503
+      - name: Recreate MLflow and wait for API   # ✅ anti-503, sans do/until
         run: |
           docker compose -f docker-compose.yml rm -sf mlflow
           docker compose -f docker-compose.yml up -d mlflow
 
-          # Attendre l’API /api/2.0 jusqu’à 10 minutes
-          $deadline = (Get-Date).AddMinutes(10)
-          $ok = $false
           $api = "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list"
+          $ok = $false
 
-          do {
+          # 300 * 2s = 10 minutes max
+          for ($i = 0; $i -lt 300; $i++) {
             $state = ""
-            try { $state = (docker inspect -f '{{.State.Status}}' mlflow).Trim() } catch {}
+            try {
+              $state = (docker inspect -f '{{.State.Status}}' mlflow).Trim()
+            } catch {}
+
             if ($state -eq "exited" -or $state -eq "dead") {
               Write-Host "=== mlflow logs (tail) ==="
               docker logs mlflow --tail 200
               throw "mlflow container exited (state=$state)"
             }
+
             try {
               Invoke-WebRequest -UseBasicParsing -Uri $api -TimeoutSec 5 | Out-Null
               $ok = $true
+              break
             } catch {
-              Start-Sleep -Seconds 3
+              Start-Sleep -Seconds 2
             }
+          }
+
+          if (-not $ok) {
+            Write-Host "=== mlflow logs (tail) ==="
+            docker logs mlflow --tail 200
+            throw "MLflow API not ready after 10 minutes"
+          }
+
+      - name: Train & register model (new ModelVersion)
+        run: |
+          docker compose -f docker-compose.yml run --rm trainer
+
+      - name: Deploy FastAPI (up + wait + restart)
+        run: |
+          docker compose -f docker-compose.yml up -d --build --wait --wait-timeout 90 serve
+          docker compose -f docker-compose.yml restart serve
+
+      - name: Show endpoints
+        run: |
+          Write-Host "MLflow UI     : http://127.0.0.1:5000"
+          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 
