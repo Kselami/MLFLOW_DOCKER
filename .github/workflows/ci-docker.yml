@@ -16,18 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Ne rebuild que ce qui change côté app
+      # Build uniquement ce qui change côté app
       - name: Build trainer & serve only
         run: docker compose -f docker-compose.yml build trainer serve
 
-      # Démarrer DB puis recréer MLflow proprement (respecte depends_on)
+      # Démarre la DB, puis redémarre proprement MLflow (si image changée)
       - name: Up Postgres
         run: docker compose -f docker-compose.yml up -d postgres
 
       - name: Recreate MLflow (clean restart)
-        run: docker compose -f docker-compose.yml up -d --force-recreate mlflow
+        run: docker compose -f docker-compose.yml up -d --force-recreate --no-deps mlflow
 
-      # 1) Attendre la Web UI via l'action (peu bavarde)
+      # Attente en 2 temps (HTML puis API), sans scripts locaux
       - name: Wait for MLflow Web UI
         uses: jtalk/url-health-check-action@v4
         with:
@@ -37,7 +37,11 @@ jobs:
           follow-redirect: false
           retry-all: true
 
-      # 2) Attendre l'API REST depuis l'intérieur du conteneur (plus de "Empty reply")
+      - name: Short grace period
+        uses: juliangruber/sleep-action@v1
+        with:
+          time: 20s
+
       - name: Wait for MLflow API (in-container)
         run: >
           docker exec mlflow sh -lc
@@ -47,11 +51,11 @@ jobs:
            done;
            echo "API not ready"; exit 1'
 
-      # Entraîner & enregistrer une nouvelle version du modèle
+      # Entraîner et créer une nouvelle Model Version
       - name: Train & register model
         run: docker compose -f docker-compose.yml run --rm trainer
 
-      # (Re)déployer l'API de service
+      # Déployer l'API FastAPI et s'assurer qu'elle est prête
       - name: Up serve
         run: docker compose -f docker-compose.yml up -d serve
 
@@ -64,7 +68,6 @@ jobs:
           follow-redirect: false
           retry-all: true
 
-      # Redémarrer pour charger la dernière version
       - name: Restart serve to load latest model
         run: docker compose -f docker-compose.yml restart serve
 
@@ -81,6 +84,7 @@ jobs:
         run: |
           echo "MLflow UI     : http://127.0.0.1:5000"
           echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 
