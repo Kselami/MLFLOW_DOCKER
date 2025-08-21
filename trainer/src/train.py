@@ -1,3 +1,4 @@
+
 import argparse, os
 from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
@@ -29,15 +30,28 @@ def train_and_log(experiment_name: str,
         acc = float(accuracy_score(y_te, y_pr))
         mlflow.log_metric("accuracy", acc)
 
-        # Enregistrer le modèle et l’inscrire au Model Registry
-        mlflow.sklearn.log_model(
-            sk_model=clf,
-            artifact_path="model",
-            registered_model_name=registered_model_name
-        )
+        # Transition to Production if accuracy is good
+        if acc >= min_accuracy:
+            mlflow.sklearn.log_model(
+                sk_model=clf,
+                artifact_path="model",
+                registered_model_name=registered_model_name
+            )
+            # Transition the new model version to Production
+            client = mlflow.tracking.MlflowClient()
+            latest_versions = client.get_latest_versions(registered_model_name, stages=["None"])
+            for version in latest_versions:
+                if version.run_id == run.info.run_id:
+                    client.transition_model_version_stage(
+                        name=registered_model_name,
+                        version=version.version,
+                        stage="Production",
+                        archive_existing_versions=True
+                    )
+        else:
+            print(f"[WARN] accuracy {acc:.4f} < min_accuracy {min_accuracy:.4f}. Model not registered.")
+
         print(f"Run: {run.info.run_id}  accuracy={acc:.4f}")
-        if acc < min_accuracy:
-            print(f"[WARN] accuracy {acc:.4f} < min_accuracy {min_accuracy:.4f} (le run reste FINISHED).")
         return acc
 
 def build_argparser():
@@ -47,7 +61,7 @@ def build_argparser():
     ap.add_argument("--n_estimators", type=int, default=200)
     ap.add_argument("--max_depth", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--min_accuracy", type=float, default=0.0)
+    ap.add_argument("--min_accuracy", type=float, default=0.9)
     return ap
 
 def main(argv=None):
@@ -63,5 +77,6 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
 
 

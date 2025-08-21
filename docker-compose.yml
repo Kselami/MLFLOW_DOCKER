@@ -1,3 +1,6 @@
+
+version: '3.8'
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -7,6 +10,8 @@ services:
       POSTGRES_DB: mlflow
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - ml-network
 
   mlflow:
     build: ./mlflow
@@ -26,6 +31,8 @@ services:
       --artifacts-destination /mlflow/artifacts
       --host 0.0.0.0 --port 5000
       --workers 1
+    networks:
+      - ml-network
 
   trainer:
     build: ./trainer
@@ -34,6 +41,8 @@ services:
       - mlflow
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+    networks:
+      - ml-network
 
   serve:
     build: ./serve
@@ -45,10 +54,18 @@ services:
       - MODEL_NAME=CancerClassifier
     ports:
       - "8000:8000"
+    networks:
+      - ml-network
+    restart: unless-stopped
 
 volumes:
-  pgdata: {}
-  mlflow_artifacts: {}
+  pgdata:
+  mlflow_artifacts:
+
+networks:
+  ml-network:
+    driver: bridge
+
 
 
 
