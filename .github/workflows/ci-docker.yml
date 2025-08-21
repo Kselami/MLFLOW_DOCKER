@@ -16,33 +16,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build (toutes les images)
       - name: Build images
         run: docker compose -f docker-compose.yml build
 
-      # Démarrer Postgres + MLflow (architecture moderne avec backend Postgres)
       - name: Up DB + MLflow
         run: docker compose -f docker-compose.yml up -d postgres mlflow
 
-      # ✅ Attente robuste de l’API MLflow (plus de valid-status-codes ; retry-all activé)
+      # 1) Attendre l'UI HTML (répond en général plus vite)
+      - name: Wait for MLflow Web UI
+        uses: jtalk/url-health-check-action@v4
+        with:
+          url: http://127.0.0.1:5000/
+          max-attempts: 90
+          retry-delay: 3s
+          follow-redirect: false
+          retry-all: true
+
+      # 2) Puis l’API REST (quand la DB est vraiment prête)
       - name: Wait for MLflow API
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:5000/api/2.0/mlflow/experiments/list
-          max-attempts: 240     # 240 * 5s = 20 min si besoin
+          max-attempts: 120
           retry-delay: 5s
           follow-redirect: false
-          retry-all: true       # réessaie aussi les erreurs transitoires (exit 52, etc.)
+          retry-all: true
 
-      # Entraîner et enregistrer une nouvelle version du modèle
       - name: Train & register model
         run: docker compose -f docker-compose.yml run --rm trainer
 
-      # Démarrer/rafraîchir l'API de service
       - name: Up serve
         run: docker compose -f docker-compose.yml up -d serve
 
-      # ✅ Attente robuste de l’API FastAPI
       - name: Wait for FastAPI
         uses: jtalk/url-health-check-action@v4
         with:
@@ -56,6 +61,7 @@ jobs:
         run: |
           echo "MLflow UI     : http://127.0.0.1:5000"
           echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 

@@ -25,20 +25,22 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
-    # Artifacts en local (volume nommé) — pas de souci Windows
+    # Artifacts persistants (pas de bind Windows)
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
+    # 👉 1 seul worker pour éviter toute flakiness au boot
     environment:
-      # Sécurité: même si Gunicorn change par défaut, on borne à 2 workers
-      - GUNICORN_CMD_ARGS=--workers 2 --timeout 300 --graceful-timeout 60 --threads 1 --keep-alive 5
+      - GUNICORN_CMD_ARGS=--workers 1 --timeout 300 --graceful-timeout 60 --threads 1 --keep-alive 5
     command: >
       mlflow server
       --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow
       --serve-artifacts
       --artifacts-destination /mlflow/artifacts
       --host 0.0.0.0 --port 5000
+      --workers 1
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/2.0/mlflow/experiments/list"]
+      # check léger sur la home d'abord
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
       interval: 5s
       timeout: 5s
       retries: 120
@@ -76,6 +78,7 @@ services:
 volumes:
   pgdata: {}
   mlflow_artifacts: {}
+
 
 
 
