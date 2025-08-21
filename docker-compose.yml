@@ -25,26 +25,26 @@ services:
         condition: service_healthy
     ports:
       - "5000:5000"
-    # Artifacts persistants (pas de bind Windows)
     volumes:
-      - mlflow_artifacts:/mlflow/artifacts
-    # 👉 1 seul worker pour éviter toute flakiness au boot
+      - mlflow_artifacts:/mlflow/artifacts   # artefacts persistants (pas de bind Windows)
     environment:
+      # 1 seul worker (robuste) + timeouts gunicorn
       - GUNICORN_CMD_ARGS=--workers 1 --timeout 300 --graceful-timeout 60 --threads 1 --keep-alive 5
     command: >
       mlflow server
-      --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow
+      --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow?pool_pre_ping=true
       --serve-artifacts
       --artifacts-destination /mlflow/artifacts
       --host 0.0.0.0 --port 5000
       --workers 1
     healthcheck:
-      # check léger sur la home d'abord
+      # on peut attendre la home ; les actions CI vérifieront ensuite l'API REST
       test: ["CMD", "curl", "-fsS", "http://localhost:5000/"]
       interval: 5s
       timeout: 5s
       retries: 120
       start_period: 30s
+    restart: unless-stopped
 
   trainer:
     build: ./trainer
@@ -74,10 +74,12 @@ services:
       timeout: 3s
       retries: 25
       start_period: 10s
+    restart: unless-stopped
 
 volumes:
   pgdata: {}
   mlflow_artifacts: {}
+
 
 
 

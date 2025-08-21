@@ -16,35 +16,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build images
-        run: docker compose -f docker-compose.yml build
+      # Ne rebuild que ce qui change (trainer, serve)
+      - name: Build trainer & serve only
+        run: docker compose -f docker-compose.yml build trainer serve
 
-      - name: Up DB + MLflow
-        run: docker compose -f docker-compose.yml up -d postgres mlflow
+      # Démarrer Postgres puis recréer MLflow proprement (sans dépendances)
+      - name: Up Postgres
+        run: docker compose -f docker-compose.yml up -d postgres
 
-      # 1) Attendre l'UI HTML (répond en général plus vite)
+      - name: Recreate MLflow (clean restart)
+        run: docker compose -f docker-compose.yml up -d --force-recreate --no-deps mlflow
+
+      # Attente en 2 temps : UI puis API (action GitHub sans PowerShell)
       - name: Wait for MLflow Web UI
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:5000/
-          max-attempts: 90
-          retry-delay: 3s
+          max-attempts: 45
+          retry-delay: 8s
           follow-redirect: false
           retry-all: true
 
-      # 2) Puis l’API REST (quand la DB est vraiment prête)
+      - name: Short grace period
+        uses: juliangruber/sleep-action@v1
+        with:
+          time: 20s
+
       - name: Wait for MLflow API
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:5000/api/2.0/mlflow/experiments/list
-          max-attempts: 120
+          max-attempts: 60
           retry-delay: 5s
           follow-redirect: false
           retry-all: true
 
+      # Entraîner & enregistrer une nouvelle version du modèle
       - name: Train & register model
         run: docker compose -f docker-compose.yml run --rm trainer
 
+      # (Re)déployer l'API de service et s'assurer qu'elle est prête
       - name: Up serve
         run: docker compose -f docker-compose.yml up -d serve
 
@@ -52,7 +63,20 @@ jobs:
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:8000/health
-          max-attempts: 120
+          max-attempts: 60
+          retry-delay: 3s
+          follow-redirect: false
+          retry-all: true
+
+      # Redémarrer pour charger la dernière version du modèle
+      - name: Restart serve to load latest model
+        run: docker compose -f docker-compose.yml restart serve
+
+      - name: Wait for FastAPI (post-restart)
+        uses: jtalk/url-health-check-action@v4
+        with:
+          url: http://127.0.0.1:8000/health
+          max-attempts: 60
           retry-delay: 3s
           follow-redirect: false
           retry-all: true
@@ -61,6 +85,7 @@ jobs:
         run: |
           echo "MLflow UI     : http://127.0.0.1:5000"
           echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 
