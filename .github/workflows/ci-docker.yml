@@ -19,38 +19,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) Build uniquement trainer & serve (on ne touche pas à mlflow)
-      - name: Build trainer & serve images
+      - name: Build all images
         run: |
-          docker compose -f docker-compose.yml build trainer serve
+          docker compose -f docker-compose.yml build
 
-      # 2) S'assurer que MLflow tourne (sans le recréer si déjà OK) + attendre l'API
-      - name: Ensure MLflow is up (no recreate) + wait for API
+      - name: Start MLflow (wait until healthy)
         run: |
-          # Démarre MLflow si pas déjà lancé
-          docker compose -f docker-compose.yml up -d mlflow
+          docker compose -f docker-compose.yml up -d --wait --wait-timeout 120 mlflow
 
-          # Attendre explicitement l'API /api/2.0 (en plus du healthcheck)
-          $deadline = (Get-Date).AddMinutes(5)
-          do {
-            try {
-              Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:5000/api/2.0/mlflow/experiments/list" -TimeoutSec 3 | Out-Null
-              Write-Host "MLflow API OK"
-              $ok = $true
-            } catch {
-              Start-Sleep -Seconds 2
-            }
-          } until ($ok -or (Get-Date) -ge $deadline)
-
-          if (-not $ok) { throw "MLflow API not ready after 5 minutes" }
-
-      # 3) Entraîner & enregistrer une nouvelle version du modèle
-      - name: Train & register model (new ModelVersion)
+      - name: Train & register model (run once)
         run: |
           docker compose -f docker-compose.yml run --rm trainer
 
-      # 4) Déployer / rafraîchir FastAPI
-      - name: Deploy FastAPI (up + wait + restart)
+      - name: Deploy FastAPI (up + wait + restart to load latest model)
         run: |
           docker compose -f docker-compose.yml up -d --wait --wait-timeout 60 serve
           docker compose -f docker-compose.yml restart serve
@@ -58,5 +39,6 @@ jobs:
       - name: Show endpoints
         run: |
           Write-Host "MLflow UI     : http://127.0.0.1:5000"
-          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs" ###
+          Write-Host "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
