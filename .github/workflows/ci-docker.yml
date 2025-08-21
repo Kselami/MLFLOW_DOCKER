@@ -12,6 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: self-hosted
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,41 +20,43 @@ jobs:
       - name: Build images
         run: docker compose -f docker-compose.yml build
 
-      # Démarre Postgres + MLflow (sans scripts maison)
+      # Démarrer Postgres + MLflow (architecture moderne avec backend Postgres)
       - name: Up DB + MLflow
         run: docker compose -f docker-compose.yml up -d postgres mlflow
 
-      # Attendre l'API MLflow /api/2.0/... avec une action dédiée
+      # ✅ Attente robuste de l’API MLflow (plus de valid-status-codes ; retry-all activé)
       - name: Wait for MLflow API
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:5000/api/2.0/mlflow/experiments/list
-          max-attempts: 120     # 120 * 5s = 10 min
+          max-attempts: 240     # 240 * 5s = 20 min si besoin
           retry-delay: 5s
           follow-redirect: false
-          valid-status-codes: 200
+          retry-all: true       # réessaie aussi les erreurs transitoires (exit 52, etc.)
 
-      # Entraîner et enregistrer une nouvelle version (v2, v3, …)
+      # Entraîner et enregistrer une nouvelle version du modèle
       - name: Train & register model
         run: docker compose -f docker-compose.yml run --rm trainer
 
-      # Déployer l'API (démarrage rapide, lazy-load du modèle côté app si tu as pris mon main.py)
+      # Démarrer/rafraîchir l'API de service
       - name: Up serve
         run: docker compose -f docker-compose.yml up -d serve
 
-      # Health-check FastAPI (pas de script custom)
+      # ✅ Attente robuste de l’API FastAPI
       - name: Wait for FastAPI
         uses: jtalk/url-health-check-action@v4
         with:
           url: http://127.0.0.1:8000/health
-          max-attempts: 60
+          max-attempts: 120
           retry-delay: 3s
-          valid-status-codes: 200
+          follow-redirect: false
+          retry-all: true
 
       - name: Show endpoints
         run: |
           echo "MLflow UI     : http://127.0.0.1:5000"
           echo "FastAPI (docs): http://127.0.0.1:8000/docs"
+
 
 
 
