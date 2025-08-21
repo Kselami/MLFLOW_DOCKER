@@ -20,7 +20,6 @@ jobs:
         run: |
           docker compose -f docker-compose.yml down -v --remove-orphans
           docker network prune -f
-          docker system prune -f
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -31,19 +30,15 @@ jobs:
       - name: Start infrastructure
         run: docker compose -f docker-compose.yml up -d postgres mlflow
 
-      - name: Wait for MLflow UI
-        uses: nev7n/wait_for_http_action@v1
+      - name: Wait for services
+        uses: docker/setup-buildx-action@v3
         with:
-          url: http://localhost:5000/
-          maxAttempts: 30
-          retryDelay: 5000
+          wait-for-services: true
+          wait-for-services-timeout: 300
 
-      - name: Wait for MLflow API
-        uses: nev7n/wait_for_http_action@v1
-        with:
-          url: http://localhost:5000/api/2.0/mlflow/experiments/list
-          maxAttempts: 30
-          retryDelay: 5000
+      - name: Verify MLflow is running
+        run: |
+          timeout 120 bash -c 'until curl -f http://localhost:5000/api/2.0/mlflow/experiments/list; do sleep 5; done'
 
       - name: Train model
         run: docker compose -f docker-compose.yml run --rm trainer
@@ -51,12 +46,9 @@ jobs:
       - name: Deploy API
         run: docker compose -f docker-compose.yml up -d serve
 
-      - name: Wait for FastAPI
-        uses: nev7n/wait_for_http_action@v1
-        with:
-          url: http://localhost:8000/health
-          maxAttempts: 20
-          retryDelay: 3000
+      - name: Verify FastAPI is running
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 3; done'
 
       - name: Export logs
         if: always()
