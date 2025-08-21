@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir \
     "psycopg2-binary==2.9.7" \
     "gunicorn==21.2.0"
 
-WORKDIR /mlflow
+WORKDIR /mlflow   #### hfj
 EXPOSE 5000
 
 CMD ["mlflow", "server", \
