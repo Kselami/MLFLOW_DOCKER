@@ -1,6 +1,3 @@
-
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -8,37 +5,44 @@ services:
       POSTGRES_USER: mlflow
       POSTGRES_PASSWORD: mlflow
       POSTGRES_DB: mlflow
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - ml-network
 
   mlflow:
     build: ./mlflow
-    image: local/mlflow:latest
-    depends_on:
-      - postgres
     ports:
       - "5000:5000"
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      GUNICORN_CMD_ARGS: --workers 1 --timeout 300 --graceful-timeout 60 --threads 1 --keep-alive 5
-    command: >
-      mlflow server
-      --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres:5432/mlflow?pool_pre_ping=true
-      --serve-artifacts
-      --artifacts-destination /mlflow/artifacts
-      --host 0.0.0.0 --port 5000
-      --workers 1
+      - MLFLOW_HOST=0.0.0.0
+      - MLFLOW_PORT=5000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - ml-network
 
   trainer:
     build: ./trainer
-    image: local/trainer:latest
     depends_on:
-      - mlflow
+      mlflow:
+        condition: service_healthy
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     networks:
@@ -46,17 +50,22 @@ services:
 
   serve:
     build: ./serve
-    image: local/serve:latest
+    ports:
+      - "8000:8000"
     depends_on:
-      - mlflow
+      mlflow:
+        condition: service_healthy
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - MODEL_NAME=CancerClassifier
-    ports:
-      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - ml-network
-    restart: unless-stopped
 
 volumes:
   pgdata:
